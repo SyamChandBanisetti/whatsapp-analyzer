@@ -1,95 +1,92 @@
 import streamlit as st
-import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from google.generativeai import GenerativeModel, configure
 
-# Gemini API setup
-configure(api_key=os.getenv("GEMINI_API_KEY"))
+# Configure Gemini
+configure(api_key=st.secrets["GEMINI_API_KEY"])
 model = GenerativeModel("gemini-2.0-flash")
 
 st.set_page_config(page_title="WhatsApp Chat Analyzer", layout="wide")
 st.title("📲 WhatsApp Chat Analyzer")
 
-st.markdown("### Step 1: Upload WhatsApp Chat Export (.txt)")
-uploaded_file = st.file_uploader("📁 Upload WhatsApp Chat File", type=["txt"])
+uploaded_file = st.file_uploader("📁 Upload WhatsApp .txt export", type=["txt"])
 
-def extract_recent_messages(text, days=7):
-    """
-    Filters messages from the past `days` number of days and returns them sorted from latest to oldest.
-    """
-    lines = text.splitlines()
-    recent_lines = []
-    now = datetime.now()
-    
-    # WhatsApp date pattern: "06/30/2024, 9:01 AM -"
-    date_pattern = r"^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}),\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s+-"
-
-    for line in lines:
-        match = re.match(date_pattern, line)
+# Parse WhatsApp messages with date
+def parse_messages(text):
+    pattern = r"^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}),\s+(\d{1,2}:\d{2})\s*(AM|PM)?\s+-"
+    messages = []
+    for line in text.splitlines():
+        match = re.match(pattern, line)
         if match:
             date_str = match.group(1)
-            time_str = match.group(2)
-            try:
-                # Try MM/DD/YYYY
-                msg_datetime = datetime.strptime(f"{date_str} {time_str}", "%m/%d/%Y %I:%M %p")
-            except:
+            time_str = match.group(2) + (" " + match.group(3) if match.group(3) else "")
+            for fmt in ("%d/%m/%Y %I:%M %p", "%m/%d/%Y %I:%M %p", "%d/%m/%Y %H:%M", "%m/%d/%Y %H:%M"):
                 try:
-                    # Try DD/MM/YYYY
-                    msg_datetime = datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %I:%M %p")
+                    dt = datetime.strptime(f"{date_str} {time_str}", fmt)
+                    messages.append((dt, line))
+                    break
                 except:
                     continue
-            if msg_datetime >= now - timedelta(days=days):
-                recent_lines.append((msg_datetime, line))
+    return messages
 
-    # Sort by most recent
-    recent_lines.sort(reverse=True)
-    return [line for dt, line in recent_lines]
-
-# Main Analysis
 if uploaded_file:
     raw_text = uploaded_file.read().decode("utf-8")
-    recent_chat_lines = extract_recent_messages(raw_text, days=7)
-    
-    if not recent_chat_lines:
-        st.warning("No recent messages found in the last 7 days.")
+    all_messages = parse_messages(raw_text)
+
+    if not all_messages:
+        st.error("No valid messages found.")
     else:
-        filtered_chat = "\n".join(recent_chat_lines)
+        st.markdown("### 🔎 Filter Options")
 
-        if st.button("📊 Analyze Reminders & Meetings"):
+        dates = [msg[0] for msg in all_messages]
+        min_date = min(dates)
+        max_date = max(dates)
+
+        start_date = st.date_input("Start date", value=min_date.date(), min_value=min_date.date(), max_value=max_date.date())
+        end_date = st.date_input("End date", value=max_date.date(), min_value=min_date.date(), max_value=max_date.date())
+
+        sort_order = st.radio("Sort by", ["Newest First", "Oldest First"])
+
+        filtered = [msg for msg in all_messages if start_date <= msg[0].date() <= end_date]
+        filtered.sort(reverse=(sort_order == "Newest First"))
+
+        chat_text = "\n".join([msg[1] for msg in filtered])
+
+        st.markdown(f"### 💬 Filtered messages: {len(filtered)}")
+
+        if st.button("📊 Analyze Messages"):
             prompt = f"""
-From the following WhatsApp chat log (last 7 days), extract:
-1. 🔔 Reminders (look for 'reminder', 'don't forget', etc.)
-2. 🕒 Meeting schedules (zoom calls, calls, timings, calendar items)
-3. 🔗 Important links
-4. ✅ Action items
+Analyze the WhatsApp messages below.
 
-Sort the results by most recent date (descending). Show in markdown with date and time stamps.
+Extract:
+- 🔔 Reminders
+- 🗓️ Meeting schedules or time-based events
+- 🔗 Shared links
+- ✅ To-do items or important actions
 
-Chat log:
-{filtered_chat}
+Format clearly with headings and timestamps.
+
+Chat:
+{chat_text}
 """
-            with st.spinner("Analyzing recent chat messages..."):
+            with st.spinner("Analyzing..."):
                 response = model.generate_content(prompt)
-                st.subheader("📌 Gemini Analysis")
+                st.subheader("📌 Gemini Summary")
                 st.markdown(response.text)
 
-        st.markdown("---")
-        st.subheader("🤖 Chatbot: Ask About Recent Messages")
-        user_question = st.text_input("Ask a question (e.g., What Zoom meetings are scheduled?)")
+        st.divider()
+        st.subheader("🤖 Ask the Assistant")
+        user_q = st.text_input("Ask a question (e.g. 'What reminders are there?')")
 
-        if user_question:
-            chat_prompt = f"""
-You are an AI assistant analyzing a WhatsApp chat log from the last 7 days.
-Answer the user's question accurately using only the information below.
+        if user_q:
+            q_prompt = f"""
+User question: {user_q}
 
-User's question:
-{user_question}
-
-Chat log:
-{filtered_chat}
+Based only on this WhatsApp chat:
+{chat_text}
 """
-            with st.spinner("Thinking..."):
-                chat_response = model.generate_content(chat_prompt)
+            with st.spinner("Answering..."):
+                answer = model.generate_content(q_prompt)
                 st.markdown("**Answer:**")
-                st.markdown(chat_response.text)
+                st.markdown(answer.text)
