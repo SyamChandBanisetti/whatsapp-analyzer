@@ -7,7 +7,7 @@ configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = GenerativeModel("gemini-2.0-flash")
 
 st.set_page_config(page_title="WhatsApp Analyzer", layout="wide")
-st.title("📲 WhatsApp Chat Analyzer (Gemini-powered)")
+st.title("📲 WhatsApp Chat Analyzer")
 
 # Step 1: Upload WhatsApp chat file
 uploaded_file = st.file_uploader("📁 Upload WhatsApp Chat (.txt)", type=["txt"])
