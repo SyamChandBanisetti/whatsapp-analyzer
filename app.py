@@ -1,62 +1,95 @@
 import streamlit as st
-from google.generativeai import GenerativeModel, configure
 import os
+import re
+from datetime import datetime, timedelta
+from google.generativeai import GenerativeModel, configure
 
-# 🔐 Configure Gemini API
+# Gemini API setup
 configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = GenerativeModel("gemini-2.0-flash")
 
-st.set_page_config(page_title="WhatsApp Analyzer", layout="wide")
+st.set_page_config(page_title="WhatsApp Chat Analyzer", layout="wide")
 st.title("📲 WhatsApp Chat Analyzer")
 
-# Step 1: Upload WhatsApp chat file
-uploaded_file = st.file_uploader("📁 Upload WhatsApp Chat (.txt)", type=["txt"])
+st.markdown("### Step 1: Upload WhatsApp Chat Export (.txt)")
+uploaded_file = st.file_uploader("📁 Upload WhatsApp Chat File", type=["txt"])
 
-chat_text = ""
+def extract_recent_messages(text, days=7):
+    """
+    Filters messages from the past `days` number of days and returns them sorted from latest to oldest.
+    """
+    lines = text.splitlines()
+    recent_lines = []
+    now = datetime.now()
+    
+    # WhatsApp date pattern: "06/30/2024, 9:01 AM -"
+    date_pattern = r"^(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}),\s+(\d{1,2}:\d{2}\s*(?:AM|PM)?)\s+-"
+
+    for line in lines:
+        match = re.match(date_pattern, line)
+        if match:
+            date_str = match.group(1)
+            time_str = match.group(2)
+            try:
+                # Try MM/DD/YYYY
+                msg_datetime = datetime.strptime(f"{date_str} {time_str}", "%m/%d/%Y %I:%M %p")
+            except:
+                try:
+                    # Try DD/MM/YYYY
+                    msg_datetime = datetime.strptime(f"{date_str} {time_str}", "%d/%m/%Y %I:%M %p")
+                except:
+                    continue
+            if msg_datetime >= now - timedelta(days=days):
+                recent_lines.append((msg_datetime, line))
+
+    # Sort by most recent
+    recent_lines.sort(reverse=True)
+    return [line for dt, line in recent_lines]
+
+# Main Analysis
 if uploaded_file:
-    chat_text = uploaded_file.read().decode("utf-8")
-    st.success("✅ Chat file uploaded!")
+    raw_text = uploaded_file.read().decode("utf-8")
+    recent_chat_lines = extract_recent_messages(raw_text, days=7)
+    
+    if not recent_chat_lines:
+        st.warning("No recent messages found in the last 7 days.")
+    else:
+        filtered_chat = "\n".join(recent_chat_lines)
 
-# Step 2: Analyze using Gemini
-if chat_text and st.button("📊 Analyze Important Info"):
-    prompt = f"""
-From the following WhatsApp chat log, extract:
-- 📌 Key messages or announcements
-- 🕒 Dates, schedules, meetings
-- 🔗 Links shared
-- ✅ Action items or tasks
+        if st.button("📊 Analyze Reminders & Meetings"):
+            prompt = f"""
+From the following WhatsApp chat log (last 7 days), extract:
+1. 🔔 Reminders (look for 'reminder', 'don't forget', etc.)
+2. 🕒 Meeting schedules (zoom calls, calls, timings, calendar items)
+3. 🔗 Important links
+4. ✅ Action items
 
-Return in markdown with sections:
-1. Summary
-2. Links
-3. Schedules
-4. Tasks
+Sort the results by most recent date (descending). Show in markdown with date and time stamps.
 
-Chat content:
-{chat_text}
+Chat log:
+{filtered_chat}
 """
-    with st.spinner("Analyzing chat with Gemini..."):
-        response = model.generate_content(prompt)
-        st.markdown("### 📊 Analysis Result")
-        st.markdown(response.text)
+            with st.spinner("Analyzing recent chat messages..."):
+                response = model.generate_content(prompt)
+                st.subheader("📌 Gemini Analysis")
+                st.markdown(response.text)
 
-# Step 3: Chatbot interface
-if chat_text:
-    st.markdown("---")
-    st.subheader("🤖 Chat with Your WhatsApp Data")
+        st.markdown("---")
+        st.subheader("🤖 Chatbot: Ask About Recent Messages")
+        user_question = st.text_input("Ask a question (e.g., What Zoom meetings are scheduled?)")
 
-    user_input = st.text_input("Ask a question (e.g., What meetings are planned?)")
-    if user_input:
-        chat_prompt = f"""
-You are an AI assistant. Use the WhatsApp chat log below to answer the user's question.
+        if user_question:
+            chat_prompt = f"""
+You are an AI assistant analyzing a WhatsApp chat log from the last 7 days.
+Answer the user's question accurately using only the information below.
 
 User's question:
-{user_input}
+{user_question}
 
-Chat content:
-{chat_text}
+Chat log:
+{filtered_chat}
 """
-        with st.spinner("Thinking..."):
-            chat_response = model.generate_content(chat_prompt)
-            st.markdown("**Response:**")
-            st.markdown(chat_response.text)
+            with st.spinner("Thinking..."):
+                chat_response = model.generate_content(chat_prompt)
+                st.markdown("**Answer:**")
+                st.markdown(chat_response.text)
