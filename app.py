@@ -1,42 +1,62 @@
 import streamlit as st
-from whatsapp_scraper import start_browser, extract_messages
-from gemini_utils import analyze_messages
-import json
+from google.generativeai import GenerativeModel, configure
+import os
 
-st.set_page_config("WhatsApp Analyzer", layout="wide")
+# 🔐 Configure Gemini API
+configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = GenerativeModel("gemini-2.0-flash")
 
-st.title("📱 WhatsApp Message Analyzer using Gemini 2.0 Flash")
+st.set_page_config(page_title="WhatsApp Analyzer", layout="wide")
+st.title("📲 WhatsApp Chat Analyzer (Gemini-powered)")
 
-if "driver" not in st.session_state:
-    st.session_state.driver = None
+# Step 1: Upload WhatsApp chat file
+uploaded_file = st.file_uploader("📁 Upload WhatsApp Chat (.txt)", type=["txt"])
 
-st.markdown("### Step 1: Connect WhatsApp")
+chat_text = ""
+if uploaded_file:
+    chat_text = uploaded_file.read().decode("utf-8")
+    st.success("✅ Chat file uploaded!")
 
-if st.button("🔗 Start WhatsApp Web"):
-    st.session_state.driver = start_browser()
-    st.success("WhatsApp Web opened. Please scan QR code!")
+# Step 2: Analyze using Gemini
+if chat_text and st.button("📊 Analyze Important Info"):
+    prompt = f"""
+From the following WhatsApp chat log, extract:
+- 📌 Key messages or announcements
+- 🕒 Dates, schedules, meetings
+- 🔗 Links shared
+- ✅ Action items or tasks
 
-if st.button("📥 Extract & Analyze Messages"):
-    if not st.session_state.driver:
-        st.warning("Start WhatsApp Web first!")
-    else:
-        with st.spinner("Extracting messages..."):
-            raw = extract_messages(st.session_state.driver)
-            result = analyze_messages(raw)
+Return in markdown with sections:
+1. Summary
+2. Links
+3. Schedules
+4. Tasks
 
-            st.markdown("## 📊 Analysis Result")
-            st.json(json.loads(result))
+Chat content:
+{chat_text}
+"""
+    with st.spinner("Analyzing chat with Gemini..."):
+        response = model.generate_content(prompt)
+        st.markdown("### 📊 Analysis Result")
+        st.markdown(response.text)
 
-st.markdown("---")
-st.markdown("### 💬 Ask AI about extracted data")
-user_input = st.text_input("Enter your query (e.g., What meetings are scheduled?)")
+# Step 3: Chatbot interface
+if chat_text:
+    st.markdown("---")
+    st.subheader("🤖 Chat with Your WhatsApp Data")
 
-if user_input:
-    with st.spinner("Analyzing with Gemini..."):
-        full_prompt = f"""Based on this data:
-        {raw}
+    user_input = st.text_input("Ask a question (e.g., What meetings are planned?)")
+    if user_input:
+        chat_prompt = f"""
+You are an AI assistant. Use the WhatsApp chat log below to answer the user's question.
 
-        Answer this question: {user_input}"""
-        response = analyze_messages(full_prompt)
-        st.markdown("#### 🧠 Gemini Response")
-        st.write(response)
+User's question:
+{user_input}
+
+Chat content:
+{chat_text}
+"""
+        with st.spinner("Thinking..."):
+            chat_response = model.generate_content(chat_prompt)
+            st.markdown("**Response:**")
+            st.markdown(chat_response.text)
